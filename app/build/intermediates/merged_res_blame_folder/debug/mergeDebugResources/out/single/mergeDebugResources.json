@@ -1,0 +1,38 @@
+[
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_item_attendance.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/item_attendance.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_manage_users.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_manage_users.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_dashboard.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_dashboard.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_mark_attendance.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_mark_attendance.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_item_user.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/item_user.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_login.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_login.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_splash.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_splash.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_register_face.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_register_face.xml"
+    },
+    {
+        "merged": "com.prawin.attendanceapp-debug-31:/layout_activity_attendance_list.xml.flat",
+        "source": "com.prawin.attendanceapp-main-33:/layout/activity_attendance_list.xml"
+    }
+]

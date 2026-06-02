@@ -1,0 +1,8 @@
+camera:
+  backend: picamera2
+  source: 0
+  width: 1280
+  height: 720
+
+recognition:
+  strictness_threshold: 0.50
