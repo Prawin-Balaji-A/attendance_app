@@ -395,50 +395,13 @@ async def camera_frame():
 
 
 def _extract_augmented_embeddings(engine, frame, light_only=False):
-    """
-    Data Augmentation: Multiply a single frame into multiple variations
-    (brightness, flip, slight rotations) to massively improve SVM/KNN training.
-    """
+    # Stub to avoid breaking existing references temporarily,
+    # but we just return the original embedding.
     embs = []
-    
-    # 1. Original
     emb = engine.extract_embedding_from_image(frame)
-    if emb is not None: embs.append(emb.tolist())
-    else: return []  # If no face in original, skip variations
-    
-    # 2. Brighten (Simulates bright conditions)
-    bright = cv2.convertScaleAbs(frame, alpha=1.0, beta=45)
-    emb = engine.extract_embedding_from_image(bright)
-    if emb is not None: embs.append(emb.tolist())
-    
-    # 3. Darken (Simulates dark/dim conditions)
-    dark = cv2.convertScaleAbs(frame, alpha=1.0, beta=-45)
-    emb = engine.extract_embedding_from_image(dark)
-    if emb is not None: embs.append(emb.tolist())
-    
-    if light_only:
-        return embs
-    
-    # 4. Horizontal Flip (perfect for generalizing side profiles)
-    flipped = cv2.flip(frame, 1)
-    emb = engine.extract_embedding_from_image(flipped)
-    if emb is not None: embs.append(emb.tolist())
-    
-    # 5. Rotate +7 degrees
-    h, w = frame.shape[:2]
-    M1 = cv2.getRotationMatrix2D((w/2, h/2), 7, 1.0)
-    rot1 = cv2.warpAffine(frame, M1, (w, h))
-    emb = engine.extract_embedding_from_image(rot1)
-    if emb is not None: embs.append(emb.tolist())
-    
-    # 6. Rotate -7 degrees
-    M2 = cv2.getRotationMatrix2D((w/2, h/2), -7, 1.0)
-    rot2 = cv2.warpAffine(frame, M2, (w, h))
-    emb = engine.extract_embedding_from_image(rot2)
-    if emb is not None: embs.append(emb.tolist())
-    
+    if emb is not None:
+        embs.append(emb.tolist())
     return embs
-
 
 @app.post("/register-image")
 async def register_image(
@@ -533,11 +496,10 @@ async def register_live(
     # 2. Processing Phase: Extract embeddings from the 50 distinct real frames
     collected = []
     for frame in raw_frames:
-        # Apply intense lighting augmentations to each frame, but skip slow rotations!
-        embs = _extract_augmented_embeddings(engine, frame, light_only=True)
-        if embs:
-            collected.extend(embs)
-        # Yield to let the live stream update and prevent timeouts
+        emb = engine.extract_embedding_from_image(frame)
+        if emb is not None:
+            collected.append(emb.tolist())
+        # Yield to let the live stream update
         await asyncio.sleep(0.01)
 
     if not collected:
