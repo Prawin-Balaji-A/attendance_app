@@ -23,7 +23,7 @@ SFACE_URL = (
 )
 SFACE_FILENAME = "face_recognition_sface_2021dec.onnx"
 
-COSINE_THRESHOLD = 0.38   # Reverted back to SFace recommended threshold (0.363 - 0.38)
+COSINE_THRESHOLD = 0.65   # DeepFace/Industry empirical threshold for SFace (prevents false positives)
 L2_THRESHOLD = 1.128
 
 
