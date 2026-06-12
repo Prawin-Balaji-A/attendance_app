@@ -1,16 +1,14 @@
 """
-pipeline/tracker.py — Multi-object tracking using a pure-Python SORT
-implementation (Simple Online and Realtime Tracking).
+pipeline/tracker.py — Multi-object tracking using ByteTrack algorithm.
 
 License: MIT — fully commercial-safe.
 
-We implement a lightweight SORT variant (Kalman + IoU) so we have zero
-dependency on AGPL-licensed code. supervision's ByteTrack is also
-Apache-2.0, but we keep it self-contained for portability.
+We implement ByteTrack to maintain tracking of faces even when the detection
+confidence drops drastically (e.g., when a person bends down or turns).
+This associates low-confidence detections to existing tracks via IoU.
 """
 
 import numpy as np
-from collections import OrderedDict
 
 
 class KalmanBoxTracker:
@@ -30,22 +28,19 @@ class KalmanBoxTracker:
         w  = x2 - x1
         h  = y2 - y1
 
-        # State vector: [cx, cy, w, h, vx, vy, vw, vh]
         self.state = np.array([cx, cy, w, h, 0, 0, 0, 0], dtype=float)
 
-        # Transition matrix (constant velocity)
         self.F = np.eye(8)
         for i in range(4):
             self.F[i, i + 4] = 1.0
 
-        # Measurement matrix (observe cx, cy, w, h)
         self.H = np.zeros((4, 8))
         for i in range(4):
             self.H[i, i] = 1.0
 
         self.P = np.eye(8) * 10.0
-        self.Q = np.eye(8) * 1.0   # process noise
-        self.R = np.eye(4) * 5.0   # measurement noise
+        self.Q = np.eye(8) * 1.0
+        self.R = np.eye(4) * 5.0
 
         KalmanBoxTracker._id_counter += 1
         self.track_id = KalmanBoxTracker._id_counter
@@ -105,39 +100,45 @@ def _iou(a: tuple, b: tuple) -> float:
     return inter_area / union if union > 0 else 0.0
 
 
-class SORTTracker:
+class ByteTracker:
     """
-    Lightweight SORT multi-object tracker.
-
-    Returns active tracks with their assigned integer track IDs.
-    Tracks are stable across frames, which prevents flicker in recognition.
+    ByteTrack logic implementation.
+    Associates high-confidence detections first, then low-confidence detections
+    to unmatched tracks, avoiding ID drops on partial occlusions.
     """
 
     def __init__(
         self,
+        track_thresh: float = 0.50,
+        high_iou_thresh: float = 0.25,
+        low_iou_thresh: float = 0.40,
         max_age: int = 30,
         min_hits: int = 2,
-        iou_threshold: float = 0.25,
     ):
+        self.track_thresh = track_thresh
+        self.high_iou_thresh = high_iou_thresh
+        self.low_iou_thresh = low_iou_thresh
         self.max_age = max_age
         self.min_hits = min_hits
-        self.iou_threshold = iou_threshold
         self.trackers: list[KalmanBoxTracker] = []
         self.frame_count = 0
 
-    def update(self, detections: list[tuple[int, int, int, int]]) \
-            -> list[dict]:
+    def update(self, detections: list[tuple[tuple[int, int, int, int], float]]) -> list[dict]:
         """
-        Args:
-            detections: List of (x1, y1, x2, y2) bounding boxes.
-
-        Returns:
-            List of dicts with keys: track_id, bbox (x1,y1,x2,y2).
-            Only returns tracks that have been confirmed (min_hits).
+        detections: list of ((x1, y1, x2, y2), score)
         """
         self.frame_count += 1
 
-        # Predict all existing trackers
+        # 1. Split detections by score
+        high_dets = []
+        low_dets = []
+        for det, score in detections:
+            if score >= self.track_thresh:
+                high_dets.append((det, score))
+            else:
+                low_dets.append((det, score))
+
+        # 2. Predict trackers
         predicted = []
         to_del = []
         for i, t in enumerate(self.trackers):
@@ -149,43 +150,43 @@ class SORTTracker:
             self.trackers.pop(i)
             predicted.pop(i)
 
-        # Match detections to trackers via IoU
-        matched_t = set()
-        matched_d = set()
-        if predicted and detections:
-            iou_matrix = np.zeros((len(detections), len(predicted)))
-            for di, det in enumerate(detections):
-                for ti, pred in enumerate(predicted):
-                    iou_matrix[di, ti] = _iou(det, pred)
+        # 3. Match high confidence
+        matched_high_d, matched_high_t, unmatched_high_d, unmatched_t = self._match(
+            high_dets, predicted, self.high_iou_thresh
+        )
 
-            # Greedy match: pick best IoU pairs above threshold
-            while True:
-                idx = np.unravel_index(np.argmax(iou_matrix), iou_matrix.shape)
-                if iou_matrix[idx] < self.iou_threshold:
-                    break
-                di, ti = idx
-                matched_d.add(di)
-                matched_t.add(ti)
-                iou_matrix[di, :] = -1
-                iou_matrix[:, ti] = -1
-                self.trackers[ti].update(detections[di])
+        # 4. Match low confidence with unmatched tracks
+        unmatched_predicted = [predicted[t] for t in unmatched_t]
+        matched_low_d, matched_low_t, _, _ = self._match(
+            low_dets, unmatched_predicted, self.low_iou_thresh
+        )
 
-        # Create new trackers for unmatched detections
-        for di, det in enumerate(detections):
-            if di not in matched_d:
-                self.trackers.append(KalmanBoxTracker(det))
+        # Map matched_low_t back to original tracker indices
+        matched_t_from_low = [unmatched_t[i] for i in matched_low_t]
 
-        # Remove dead trackers
+        # 5. Update state
+        for d_idx, t_idx in zip(matched_high_d, matched_high_t):
+            self.trackers[t_idx].update(high_dets[d_idx][0])
+
+        for d_idx, t_idx in zip(matched_low_d, matched_t_from_low):
+            self.trackers[t_idx].update(low_dets[d_idx][0])
+
+        # 6. Init new tracks
+        for d_idx in unmatched_high_d:
+            self.trackers.append(KalmanBoxTracker(high_dets[d_idx][0]))
+
+        # 7. Remove dead tracks
+        matched_all_t = set(matched_high_t).union(set(matched_t_from_low))
         alive = []
         for i, t in enumerate(self.trackers):
-            if i in matched_t or t.time_since_update == 0:
-                pass  # updated this frame
+            if i in matched_all_t or t.time_since_update == 0:
+                pass
             if t.time_since_update > self.max_age:
                 continue
             alive.append(t)
         self.trackers = alive
 
-        # Return confirmed tracks
+        # 8. Return confirmed tracks
         results = []
         for t in self.trackers:
             if t.hit_streak >= self.min_hits or self.frame_count <= self.min_hits:
@@ -194,3 +195,30 @@ class SORTTracker:
                     "bbox": t.get_bbox(),
                 })
         return results
+
+    def _match(self, dets, preds, iou_threshold):
+        if not dets or not preds:
+            return [], [], list(range(len(dets))), list(range(len(preds)))
+
+        iou_matrix = np.zeros((len(dets), len(preds)))
+        for di, (det, _) in enumerate(dets):
+            for ti, pred in enumerate(preds):
+                iou_matrix[di, ti] = _iou(det, pred)
+
+        matched_d = []
+        matched_t = []
+
+        while True:
+            idx = np.unravel_index(np.argmax(iou_matrix), iou_matrix.shape)
+            if iou_matrix[idx] < iou_threshold:
+                break
+            di, ti = idx
+            matched_d.append(di)
+            matched_t.append(ti)
+            iou_matrix[di, :] = -1
+            iou_matrix[:, ti] = -1
+
+        unmatched_d = [i for i in range(len(dets)) if i not in matched_d]
+        unmatched_t = [i for i in range(len(preds)) if i not in matched_t]
+
+        return matched_d, matched_t, unmatched_d, unmatched_t
