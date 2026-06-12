@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.1.5:8000';
+  static const String baseUrl = 'http://192.168.1.2:8000';
 
   static const String videoFeedUrl = '$baseUrl/debug-face-feed';
 
@@ -46,6 +46,59 @@ class ApiService {
       request.files.add(
         await http.MultipartFile.fromPath('image', imagePath),
       );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      return await _safeDecode(response);
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> registerFromVideo({
+    required String name,
+    required String userId,
+    required String group,
+    required String videoPath,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/register-video'),
+      );
+
+      request.fields['name'] = name.trim();
+      request.fields['user_id'] = userId.trim();
+      request.fields['group'] = group.trim();
+
+      request.files.add(
+        await http.MultipartFile.fromPath('video', videoPath),
+      );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      return await _safeDecode(response);
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> registerLive({
+    required String name,
+    required String userId,
+    required String group,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/register-live'),
+      );
+
+      request.fields['name'] = name.trim();
+      request.fields['user_id'] = userId.trim();
+      request.fields['group'] = group.trim();
 
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
@@ -108,6 +161,19 @@ class ApiService {
   static Future<Map<String, dynamic>> startLiveScan() async {
     try {
       final response = await http.post(Uri.parse('$baseUrl/start-live-scan'));
+      return await _safeDecode(response);
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> setCameraMode(String mode) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/set-camera-mode'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'mode': mode}),
+      );
       return await _safeDecode(response);
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};

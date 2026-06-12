@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mjpeg_view/mjpeg_view.dart';
 
 import '../services/api_service.dart';
 import '../utils/app_colors.dart';
@@ -27,19 +29,19 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
   int currentStep = 0;
 
   final List<String> faceSteps = [
-    'Look Straight',
-    'Turn Slightly Left',
-    'Turn Slightly Right',
+    'Look Straight (Include Shoulders)',
+    'Turn Left (Turn Body & Face)',
+    'Turn Right (Turn Body & Face)',
     'Look Slightly Up',
     'Look Slightly Down',
-    'Look Straight (Smile/Vary Expression)',
+    'Look Straight (Vary Expression)',
     'Turn Further Left',
     'Turn Further Right',
-    'Tilt Head Left',
-    'Tilt Head Right',
+    'Step Back slightly',
+    'Walk closer slightly',
   ];
 
-  String instruction = 'Step 1/10 : Look Straight';
+  String instruction = 'Step 1/10 : Look Straight (Include Shoulders)';
 
   bool validateInputs() {
     if (nameController.text.trim().isEmpty ||
@@ -75,7 +77,7 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
     setState(() {
       isLoading = true;
       instruction =
-      'Training face model...\nStep ${currentStep + 1}/10';
+      'Learning Face & Body features...\nStep ${currentStep + 1}/10';
     });
 
     final result = await ApiService.registerFromImage(
@@ -104,18 +106,178 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
       } else {
         showMessage(
           'Registration Completed Successfully.\n'
-              '10 Face Angles Saved.',
+              'Face & Body Features Saved.',
         );
 
         setState(() {
           currentStep = 0;
           selectedImage = null;
-          instruction = 'Step 1/10 : Look Straight';
+          instruction = 'Step 1/10 : Look Straight (Include Shoulders)';
         });
 
         nameController.clear();
         userIdController.clear();
       }
+    }
+  }
+
+  Future<void> registerAutoCapture() async {
+    if (!validateInputs()) return;
+
+    // Show instructional dialog before opening camera
+    final bool? proceed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Important: Stand Back'),
+          content: const Text(
+            'For highest accuracy, please stand 1-2 meters away so your face AND upper body are visible.\n\n'
+            'When recording starts, slowly turn your head and body left and right.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Got it, record!'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (proceed != true) return;
+
+    try {
+      final XFile? video = await picker.pickVideo(
+        source: ImageSource.camera,
+        maxDuration: const Duration(seconds: 10),
+      );
+
+      if (video == null) return;
+
+      setState(() {
+        isLoading = true;
+        instruction = 'Learning Face & Body features...\nPlease wait.';
+      });
+
+      final result = await ApiService.registerFromVideo(
+        name: nameController.text.trim(),
+        userId: userIdController.text.trim(),
+        group: selectedGroup,
+        videoPath: video.path,
+      );
+
+    if (!mounted) return;
+
+    setState(() {
+      isLoading = false;
+    });
+
+    showMessage(result['message'] ?? 'No response');
+
+      if (result['success'] == true) {
+        setState(() {
+          currentStep = 0;
+          selectedImage = null;
+          instruction = 'Step 1/10 : Look Straight (Include Shoulders)';
+        });
+        nameController.clear();
+        userIdController.clear();
+      } else {
+        setState(() {
+          instruction = 'Step ${currentStep + 1}/10 : ${faceSteps[currentStep]}';
+        });
+      }
+    } catch (e) {
+      showMessage('Video error: $e');
+      setState(() {
+        isLoading = false;
+        instruction = 'Step ${currentStep + 1}/10 : ${faceSteps[currentStep]}';
+      });
+    }
+  }
+
+  Future<void> registerLiveCamera() async {
+    if (!validateInputs()) return;
+
+    final bool? proceed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Register from Pi Camera'),
+          content: const Text(
+            'Please stand in front of the main Raspberry Pi camera.\n\n'
+            'The system will automatically capture multiple frames of your face over the next 5 seconds to ensure perfect accuracy.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Start Live Registration'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (proceed != true) return;
+
+    int secondsLeft = 5;
+    setState(() {
+      isLoading = true;
+      instruction = 'Capturing live from Pi Camera...\n$secondsLeft seconds remaining';
+    });
+
+    Timer? countdownTimer;
+    countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (secondsLeft > 1) {
+          secondsLeft--;
+          instruction = 'Capturing live from Pi Camera...\n$secondsLeft seconds remaining';
+        } else {
+          instruction = 'Finalizing registration...';
+        }
+      });
+    });
+
+    try {
+      final result = await ApiService.registerLive(
+        name: nameController.text.trim(),
+        userId: userIdController.text.trim(),
+        group: selectedGroup,
+      );
+
+      countdownTimer.cancel();
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+        instruction = 'Step 1/10 : Look Straight (Include Shoulders)';
+      });
+
+      showMessage(result['message'] ?? 'No response');
+
+      if (result['success'] == true) {
+        nameController.clear();
+        userIdController.clear();
+      }
+    } catch (e) {
+      countdownTimer?.cancel();
+      showMessage('Registration error: $e');
+      setState(() {
+        isLoading = false;
+        instruction = 'Step 1/10 : Look Straight (Include Shoulders)';
+      });
     }
   }
 
@@ -142,30 +304,14 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
         borderRadius: BorderRadius.circular(28),
       ),
       child: selectedImage == null
-          ? Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.face_retouching_natural_rounded,
-            size: 70,
-            color: AppColors.white,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Face Capture\n${currentStep + 1}/10',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppColors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      )
+          ? MjpegView(
+              uri: ApiService.videoFeedUrl,
+              fit: BoxFit.contain,
+            )
           : Image.file(
-        selectedImage!,
-        fit: BoxFit.cover,
-      ),
+              selectedImage!,
+              fit: BoxFit.contain,
+            ),
     );
   }
 
@@ -340,6 +486,41 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
           groupDropdown(),
 
           const SizedBox(height: 10),
+
+          actionButton(
+            text: isLoading
+                ? 'Recording...'
+                : 'Auto Capture from Phone (10 Sec)',
+            icon: Icons.video_camera_front_rounded,
+            color: Colors.green,
+            onPressed: registerAutoCapture,
+          ),
+
+          const SizedBox(height: 14),
+
+          actionButton(
+            text: isLoading
+                ? 'Capturing...'
+                : 'Register from Pi Camera (Recommended)',
+            icon: Icons.camera_indoor_rounded,
+            color: Colors.blue,
+            onPressed: registerLiveCamera,
+          ),
+
+          const SizedBox(height: 14),
+
+          const Center(
+            child: Text(
+              'OR MANUAL UPLOAD',
+              style: TextStyle(
+                color: Colors.grey,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
 
           actionButton(
             text: isLoading

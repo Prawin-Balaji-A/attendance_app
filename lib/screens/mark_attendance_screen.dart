@@ -18,10 +18,10 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   int facesDetected = 0;
   int knownCount = 0;
   int unknownCount = 0;
-  int tooFarCount = 0;
 
   String statusMessage = 'Auto live scan running';
   String lastUpdated = '';
+  String currentCameraMode = 'normal';
 
   List<dynamic> detectedFaces = [];
 
@@ -56,7 +56,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           facesDetected = result['faces_detected'] ?? 0;
           knownCount = result['known_count'] ?? 0;
           unknownCount = result['unknown_count'] ?? 0;
-          tooFarCount = result['too_far_count'] ?? 0;
+          currentCameraMode = result['camera_mode'] ?? 'normal';
           lastUpdated = result['last_updated'] ?? '';
           detectedFaces = result['results'] ?? [];
         });
@@ -79,10 +79,10 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
                   minScale: 1.0,
                   maxScale: 5.0,
                   child: RotatedBox(
-                    quarterTurns: 0,
+                    quarterTurns: 1,
                     child: MjpegView(
                       uri: ApiService.videoFeedUrl,
-                      fit: BoxFit.contain,
+                      fit: BoxFit.cover,
                     ),
                   ),
                 ),
@@ -123,7 +123,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             ),
             child: MjpegView(
               uri: ApiService.videoFeedUrl,
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
             ),
           ),
           Positioned(
@@ -163,6 +163,15 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             color: Colors.green,
           ),
           const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildModeButton('Normal', 'normal'),
+              const SizedBox(width: 10),
+              _buildModeButton('Backlight', 'backlight'),
+            ],
+          ),
+          const SizedBox(height: 14),
           Text(
             statusMessage,
             textAlign: TextAlign.center,
@@ -182,7 +191,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Known: $knownCount  |  Unknown: $unknownCount  |  Too Far: $tooFarCount',
+            'Known: $knownCount  |  Unknown: $unknownCount',
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontSize: 15,
@@ -203,14 +212,37 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     );
   }
 
+  Widget _buildModeButton(String label, String mode) {
+    final isSelected = currentCameraMode == mode;
+    return InkWell(
+      onTap: () async {
+        setState(() => currentCameraMode = mode);
+        await ApiService.setCameraMode(mode);
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : AppColors.background,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? AppColors.white : AppColors.textSecondary,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget detectedFaceCard(dynamic face) {
     final bool known = face['known'] == true;
     final String status = face['status'] ?? 'unknown';
 
     final String displayName = known
         ? (face['name'] ?? 'Known')
-        : status == 'too_far'
-        ? 'Unknown / Too Far'
         : 'Unknown';
 
     final String groupText = known ? (face['group'] ?? '') : '';
@@ -218,20 +250,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
 
     final Color bgColor = known
         ? Colors.green.shade100
-        : status == 'too_far'
-        ? Colors.orange.shade100
         : Colors.red.shade100;
 
     final Color iconColor = known
         ? Colors.green
-        : status == 'too_far'
-        ? Colors.orange
         : Colors.red;
 
     final IconData icon = known
         ? Icons.verified_user_rounded
-        : status == 'too_far'
-        ? Icons.visibility_off_rounded
         : Icons.warning_amber_rounded;
 
     return Container(
