@@ -132,9 +132,9 @@ class AttendanceEngine:
 
                 # ── 3. Voting Engine Recognition ────────────────────────────
                 # Only extract embeddings if we haven't locked identity yet, 
-                # AND face is clear enough (score >= 0.50)
+                # AND face is clear enough (score >= 0.25) to prevent stalling on dark faces
                 if not state.known and face_area >= MIN_FACE_AREA and db_encodings:
-                    if best_face and best_face["score"] >= 0.50:
+                    if best_face and best_face["score"] >= 0.25:
                         face_info_bbox = (x1, y1, fw, fh)
                         landmarks = best_face.get("landmarks")
                         
