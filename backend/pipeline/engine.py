@@ -131,57 +131,62 @@ class AttendanceEngine:
                 state = self._track_states.setdefault(tid, TrackState())
 
                 # ── 3. Voting Engine Recognition ────────────────────────────
-                # Only extract embeddings if we haven't locked identity yet, 
-                # AND face is clear enough (score >= 0.25) to prevent stalling on dark faces
-                if not state.known and face_area >= MIN_FACE_AREA and db_encodings:
-                    if best_face and best_face["score"] >= 0.25:
-                        face_info_bbox = (x1, y1, fw, fh)
-                        landmarks = best_face.get("landmarks")
-                        
-                        embedding = self.recognizer.extract_embedding(
-                            frame, face_info_bbox, landmarks
-                        )
-                        if embedding is not None:
-                            state.embeddings.append(embedding)
-
-                    # Once we have at least 3 embeddings, run the Voting Engine
-                    if len(state.embeddings) >= 3:
-                        votes = []
-                        best_score = 0.0
-                        
-                        for emb in state.embeddings:
-                            uid, score = self.recognizer.match(emb, db_encodings)
-                            if uid:
-                                votes.append(uid)
-                                best_score = max(best_score, score)
-                                
-                        # If at least 2 frames agree on the same identity, lock it!
-                        if len(votes) >= 2:
-                            top_uid = Counter(votes).most_common(1)[0][0]
+                if not state.known and face_area >= MIN_FACE_AREA:
+                    if not db_encodings:
+                        # Database is empty! Impossible to match. 
+                        # Resolve to Unknown immediately to avoid infinite "Analyzing..."
+                        state.message = "No users registered"
+                        state.name = "Unknown"
+                    else:
+                        # Only extract embeddings if face is clear enough
+                        if best_face and best_face["score"] >= 0.25:
+                            face_info_bbox = (x1, y1, fw, fh)
+                            landmarks = best_face.get("landmarks")
                             
-                            user_info = next((u for u in users_db if u["user_id"] == top_uid), None)
-                            if user_info:
-                                state.known = True
-                                state.user_id = top_uid
-                                state.confidence = best_score
-                                state.name = user_info["name"]
-                                state.group = user_info["group"]
+                            embedding = self.recognizer.extract_embedding(
+                                frame, face_info_bbox, landmarks
+                            )
+                            if embedding is not None:
+                                state.embeddings.append(embedding)
+
+                        # Once we have at least 3 embeddings, run the Voting Engine
+                        if len(state.embeddings) >= 3:
+                            votes = []
+                            best_score = 0.0
+                            
+                            for emb in state.embeddings:
+                                uid, score = self.recognizer.match(emb, db_encodings)
+                                if uid:
+                                    votes.append(uid)
+                                    best_score = max(best_score, score)
+                                    
+                            # If at least 2 frames agree on the same identity, lock it!
+                            if len(votes) >= 2:
+                                top_uid = Counter(votes).most_common(1)[0][0]
                                 
-                                # Mark attendance
-                                if top_uid not in self._marked_today:
-                                    if not already_logged_fn(top_uid):
-                                        logged = log_attendance_fn(top_uid, user_info["name"], user_info["group"])
-                                        state.message = "Attendance Marked" if logged else "Already Marked Today"
+                                user_info = next((u for u in users_db if u["user_id"] == top_uid), None)
+                                if user_info:
+                                    state.known = True
+                                    state.user_id = top_uid
+                                    state.confidence = best_score
+                                    state.name = user_info["name"]
+                                    state.group = user_info["group"]
+                                    
+                                    # Mark attendance
+                                    if top_uid not in self._marked_today:
+                                        if not already_logged_fn(top_uid):
+                                            logged = log_attendance_fn(top_uid, user_info["name"], user_info["group"])
+                                            state.message = "Attendance Marked" if logged else "Already Marked Today"
+                                        else:
+                                            state.message = "Already Marked Today"
+                                        self._marked_today.add(top_uid)
                                     else:
                                         state.message = "Already Marked Today"
-                                    self._marked_today.add(top_uid)
-                                else:
-                                    state.message = "Already Marked Today"
-                        else:
-                            # Failed to reach consensus or matched no one. 
-                            # Rolling window automatically clears old frames.
-                            state.message = "Unknown face"
-                            state.name = "Unknown"
+                            else:
+                                # Failed to reach consensus or matched no one. 
+                                # Rolling window automatically clears old frames.
+                                state.message = "Unknown face"
+                                state.name = "Unknown"
 
                 # ── 5. Draw annotations ───────────────────────────────────
                 is_known   = state.known
