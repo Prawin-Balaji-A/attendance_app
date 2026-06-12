@@ -394,7 +394,7 @@ async def camera_frame():
     return StreamingResponse(io.BytesIO(buf.tobytes()), media_type="image/jpeg")
 
 
-def _extract_augmented_embeddings(engine, frame):
+def _extract_augmented_embeddings(engine, frame, light_only=False):
     """
     Data Augmentation: Multiply a single frame into multiple variations
     (brightness, flip, slight rotations) to massively improve SVM/KNN training.
@@ -406,15 +406,18 @@ def _extract_augmented_embeddings(engine, frame):
     if emb is not None: embs.append(emb.tolist())
     else: return []  # If no face in original, skip variations
     
-    # 2. Brighten
-    bright = cv2.convertScaleAbs(frame, alpha=1.0, beta=30)
+    # 2. Brighten (Simulates bright conditions)
+    bright = cv2.convertScaleAbs(frame, alpha=1.0, beta=45)
     emb = engine.extract_embedding_from_image(bright)
     if emb is not None: embs.append(emb.tolist())
     
-    # 3. Darken
-    dark = cv2.convertScaleAbs(frame, alpha=1.0, beta=-30)
+    # 3. Darken (Simulates dark/dim conditions)
+    dark = cv2.convertScaleAbs(frame, alpha=1.0, beta=-45)
     emb = engine.extract_embedding_from_image(dark)
     if emb is not None: embs.append(emb.tolist())
+    
+    if light_only:
+        return embs
     
     # 4. Horizontal Flip (perfect for generalizing side profiles)
     flipped = cv2.flip(frame, 1)
@@ -530,10 +533,11 @@ async def register_live(
     # 2. Processing Phase: Extract embeddings from the 50 distinct real frames
     collected = []
     for frame in raw_frames:
-        emb = engine.extract_embedding_from_image(frame)
-        if emb is not None:
-            collected.append(emb.tolist())
-        # Yield to let the live stream update
+        # Apply intense lighting augmentations to each frame, but skip slow rotations!
+        embs = _extract_augmented_embeddings(engine, frame, light_only=True)
+        if embs:
+            collected.extend(embs)
+        # Yield to let the live stream update and prevent timeouts
         await asyncio.sleep(0.01)
 
     if not collected:
