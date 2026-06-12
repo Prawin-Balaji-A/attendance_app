@@ -326,6 +326,12 @@ async def lifespan(app: FastAPI):
     print("[Main] Loading AI pipeline...")
     try:
         engine = AttendanceEngine(MODELS_DIR)
+        
+        # Train ML classifier with existing database on startup
+        encodings = database.get_encodings()
+        if encodings:
+            engine.recognizer.train_classifier(encodings)
+            
         print("[Main] AI pipeline ready.")
     except Exception as e:
         print(f"[Main] WARNING: Engine load failed: {e}")
@@ -388,6 +394,49 @@ async def camera_frame():
     return StreamingResponse(io.BytesIO(buf.tobytes()), media_type="image/jpeg")
 
 
+def _extract_augmented_embeddings(engine, frame):
+    """
+    Data Augmentation: Multiply a single frame into multiple variations
+    (brightness, flip, slight rotations) to massively improve SVM/KNN training.
+    """
+    embs = []
+    
+    # 1. Original
+    emb = engine.extract_embedding_from_image(frame)
+    if emb is not None: embs.append(emb.tolist())
+    else: return []  # If no face in original, skip variations
+    
+    # 2. Brighten
+    bright = cv2.convertScaleAbs(frame, alpha=1.0, beta=30)
+    emb = engine.extract_embedding_from_image(bright)
+    if emb is not None: embs.append(emb.tolist())
+    
+    # 3. Darken
+    dark = cv2.convertScaleAbs(frame, alpha=1.0, beta=-30)
+    emb = engine.extract_embedding_from_image(dark)
+    if emb is not None: embs.append(emb.tolist())
+    
+    # 4. Horizontal Flip (perfect for generalizing side profiles)
+    flipped = cv2.flip(frame, 1)
+    emb = engine.extract_embedding_from_image(flipped)
+    if emb is not None: embs.append(emb.tolist())
+    
+    # 5. Rotate +7 degrees
+    h, w = frame.shape[:2]
+    M1 = cv2.getRotationMatrix2D((w/2, h/2), 7, 1.0)
+    rot1 = cv2.warpAffine(frame, M1, (w, h))
+    emb = engine.extract_embedding_from_image(rot1)
+    if emb is not None: embs.append(emb.tolist())
+    
+    # 6. Rotate -7 degrees
+    M2 = cv2.getRotationMatrix2D((w/2, h/2), -7, 1.0)
+    rot2 = cv2.warpAffine(frame, M2, (w, h))
+    emb = engine.extract_embedding_from_image(rot2)
+    if emb is not None: embs.append(emb.tolist())
+    
+    return embs
+
+
 @app.post("/register-image")
 async def register_image(
     name: str = Form(...), user_id: str = Form(...), group: str = Form(...),
@@ -399,15 +448,19 @@ async def register_image(
     img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return {"success": False, "message": "Invalid image file"}
-    embedding = engine.extract_embedding_from_image(img)
-    if embedding is None:
+    embs = _extract_augmented_embeddings(engine, img)
+    if not embs:
         return {"success": False, "message": "No face detected. Ensure face is clearly visible."}
     encodings = database.get_encodings()
-    encodings.setdefault(user_id, []).append(embedding.tolist())
+    encodings.setdefault(user_id, []).extend(embs)
     database.save_encodings(encodings)
     database.add_user(user_id.strip(), name.strip(), group.strip())
+    
+    # Trigger model retrain
+    engine.recognizer.train_classifier(encodings)
+    
     return {"success": True,
-            "message": f"Face angle {len(encodings[user_id])} saved for {name}."}
+            "message": f"{len(embs)} face augmented angles saved for {name}."}
 
 
 @app.post("/register-video")
@@ -429,8 +482,8 @@ async def register_video(
         ret, frame = cap.read()
         if not ret: break
         if idx % sample_every == 0:
-            emb = engine.extract_embedding_from_image(frame)
-            if emb is not None: collected.append(emb.tolist())
+            embs = _extract_augmented_embeddings(engine, frame)
+            collected.extend(embs)
         idx += 1
     cap.release(); os.unlink(tmp_path)
     if not collected:
@@ -439,8 +492,12 @@ async def register_video(
     encodings.setdefault(user_id, []).extend(collected)
     database.save_encodings(encodings)
     database.add_user(user_id.strip(), name.strip(), group.strip())
+    
+    # Trigger model retrain
+    engine.recognizer.train_classifier(encodings)
+    
     return {"success": True,
-            "message": f"Registered {name} with {len(collected)} face angles."}
+            "message": f"Registered {name} with {len(collected)} augmented face angles."}
 
 
 @app.post("/register-live")
@@ -449,28 +506,50 @@ async def register_live(
 ):
     if engine is None:
         return {"success": False, "message": "AI engine not ready"}
-    start, collected, last_cap = time.time(), [], 0.0
-    while time.time() - start < 5.0:
+        
+    start = time.time()
+    raw_frames = []
+    last_cap = 0.0
+    
+    # 1. Capture Phase: 10 seconds, no AI processing to prevent lag
+    while time.time() - start < 10.0:
         now = time.time()
-        if now - last_cap >= 0.25:
+        # Grab a frame every 0.20s (up to 50 frames total)
+        if now - last_cap >= 0.20:
             with state.frame_lock:
-                frame = state.current_frame.copy() \
-                    if state.current_frame is not None else None
+                frame = state.current_frame.copy() if state.current_frame is not None else None
             if frame is not None:
-                emb = engine.extract_embedding_from_image(frame)
-                if emb is not None:
-                    collected.append(emb.tolist())
+                raw_frames.append(frame)
             last_cap = now
         await asyncio.sleep(0.05)
+        
+    if not raw_frames:
+        return {"success": False,
+                "message": "No frames captured. Camera might be disconnected."}
+
+    # 2. Processing Phase: Extract embeddings from the 50 distinct real frames
+    collected = []
+    for frame in raw_frames:
+        emb = engine.extract_embedding_from_image(frame)
+        if emb is not None:
+            collected.append(emb.tolist())
+        # Yield to let the live stream update
+        await asyncio.sleep(0.01)
+
     if not collected:
         return {"success": False,
-                "message": "No face detected. Stand in front of camera and try again."}
+                "message": "No face detected in any frame. Stand in front of camera and try again."}
+                
     encodings = database.get_encodings()
     encodings.setdefault(user_id, []).extend(collected)
     database.save_encodings(encodings)
     database.add_user(user_id.strip(), name.strip(), group.strip())
+    
+    # Trigger model retrain
+    engine.recognizer.train_classifier(encodings)
+    
     return {"success": True,
-            "message": f"{name} registered with {len(collected)} face angles (straight + side views)."}
+            "message": f"SUCCESS! {name} registered with {len(collected)} unique real face profiles."}
 
 
 @app.get("/users")

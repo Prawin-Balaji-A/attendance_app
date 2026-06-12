@@ -210,7 +210,7 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
           title: const Text('Register from Pi Camera'),
           content: const Text(
             'Please stand in front of the main Raspberry Pi camera.\n\n'
-            'The system will automatically capture multiple frames of your face over the next 5 seconds to ensure perfect accuracy.',
+            'The system will automatically capture multiple frames of your face over the next 10 seconds to ensure perfect accuracy.',
           ),
           actions: [
             TextButton(
@@ -228,7 +228,7 @@ class _RegisterFaceScreenState extends State<RegisterFaceScreen> {
 
     if (proceed != true) return;
 
-    int secondsLeft = 5;
+    int secondsLeft = 10;
     setState(() {
       isLoading = true;
       instruction = 'Capturing live from Pi Camera...\n$secondsLeft seconds remaining';
