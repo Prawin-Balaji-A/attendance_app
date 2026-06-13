@@ -37,9 +37,9 @@ class TrackState:
         self.confidence: float = 0.0
         self.last_recog_time: float = 0.0
         self.known: bool = False
-        self.name: str = "Analyzing..."
+        self.name: str = "Unknown"
         self.group: str = ""
-        self.message: str = "Collecting facial data..."
+        self.message: str = "Unknown face"
         
         # Rolling window of embeddings for voting
         self.embeddings = deque(maxlen=4)
@@ -104,9 +104,9 @@ class AttendanceEngine:
             tracks = self.tracker.update(det_boxes_with_scores)
 
             # Prune states for dead tracks
-            active_ids = {t["track_id"] for t in tracks}
+            alive_ids = {t.track_id for t in self.tracker.trackers}
             for tid in list(self._track_states.keys()):
-                if tid not in active_ids:
+                if tid not in alive_ids:
                     del self._track_states[tid]
 
             results = []
@@ -190,13 +190,11 @@ class AttendanceEngine:
 
                 # ── 5. Draw annotations ───────────────────────────────────
                 is_known   = state.known
-                # Color logic: Green = Known, Orange = Analyzing/Voting, Red = Unknown
+                # Color logic: Green = Known, Red = Unknown
                 if is_known:
                     box_color = (0, 210, 90)
-                elif state.name == "Unknown":
-                    box_color = (0, 60, 230)
                 else:
-                    box_color = (0, 165, 255) # Orange for analyzing
+                    box_color = (0, 60, 230)
                     
                 text_color = (255, 255, 255)
 
@@ -238,7 +236,7 @@ class AttendanceEngine:
                     "user_id":    state.user_id or "",
                     "group":      state.group,
                     "confidence": round(state.confidence, 3),
-                    "status":     "known" if state.known else ("analyzing" if state.name == "Analyzing..." else "unknown"),
+                    "status":     "known" if state.known else "unknown",
                     "message":    state.message,
                 })
 
