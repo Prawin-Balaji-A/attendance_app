@@ -42,7 +42,7 @@ class TrackState:
         self.message: str = "Unknown face"
         
         # Rolling window of embeddings for voting
-        self.embeddings = deque(maxlen=4)
+        self.embeddings = deque(maxlen=8)
 
 
 class AttendanceEngine:
@@ -54,11 +54,11 @@ class AttendanceEngine:
     def __init__(self, models_dir: str):
         self._lock = threading.Lock()
 
-        # Lower threshold to 0.20 to let ByteTracker handle low-confidence occluded faces
-        self.face_detector = FaceDetector(models_dir, score_threshold=0.20)
+        # Set threshold to 0.40 to filter out background noise (like clocks)
+        self.face_detector = FaceDetector(models_dir, score_threshold=0.40)
         self.recognizer    = FaceRecognizer(models_dir)
-        # ByteTracker: tracks high conf (0.50) and links low conf (0.20-0.50)
-        self.tracker       = ByteTracker(track_thresh=0.50, high_iou_thresh=0.25, low_iou_thresh=0.40, max_age=30, min_hits=2)
+        # ByteTracker: hold tracks for 90 frames (3 seconds) to survive extreme head turns
+        self.tracker       = ByteTracker(track_thresh=0.60, high_iou_thresh=0.25, low_iou_thresh=0.40, max_age=90, min_hits=2)
 
         # track_id → TrackState
         self._track_states: dict[int, TrackState] = {}
@@ -143,11 +143,11 @@ class AttendanceEngine:
                             face_info_bbox = (x1, y1, fw, fh)
                             landmarks = best_face.get("landmarks")
                             
-                            embedding = self.recognizer.extract_embedding(
+                            embeddings = self.recognizer.extract_embeddings(
                                 frame, face_info_bbox, landmarks
                             )
-                            if embedding is not None:
-                                state.embeddings.append(embedding)
+                            if embeddings:
+                                state.embeddings.extend(embeddings)
 
                         # Once we have at least 3 embeddings, run the Voting Engine
                         if len(state.embeddings) >= 3:
@@ -242,18 +242,41 @@ class AttendanceEngine:
 
             return annotated, results
 
-    def extract_embedding_from_image(self, image: np.ndarray) -> Optional[np.ndarray]:
+    def extract_embedding_from_image(self, image: np.ndarray, augment: bool = False) -> list[np.ndarray]:
         with self._lock:
-            self.face_detector._detector.setScoreThreshold(0.60)
+            # Lowered threshold to 0.40 to ensure we capture side profiles during registration!
+            self.face_detector._detector.setScoreThreshold(0.40)
             try:
                 faces = self.face_detector.detect(image)
-                if not faces: return None
+                if not faces: return []
             finally:
-                self.face_detector._detector.setScoreThreshold(0.20)
+                self.face_detector._detector.setScoreThreshold(0.40)
 
         best = max(faces, key=lambda f: f["bbox"][2] * f["bbox"][3])
+        bbox = best["bbox"]
+        landmarks = best.get("landmarks")
+        
+        embs = []
         with self._lock:
-            return self.recognizer.extract_embedding(image, best["bbox"], best.get("landmarks"))
+            # 1. Original (both aligned and unaligned)
+            original_embs = self.recognizer.extract_embeddings(image, bbox, landmarks)
+            if original_embs:
+                embs.extend(original_embs)
+                
+            if augment:
+                # 2. Extreme Silhouette (simulates 2nd/3rd image scenario)
+                shadow = cv2.convertScaleAbs(image, alpha=0.5, beta=-100)
+                shadow_embs = self.recognizer.extract_embeddings(shadow, bbox, landmarks)
+                if shadow_embs:
+                    embs.extend(shadow_embs)
+                    
+                # 3. Moderate Dark
+                dark = cv2.convertScaleAbs(image, alpha=0.8, beta=-50)
+                dark_embs = self.recognizer.extract_embeddings(dark, bbox, landmarks)
+                if dark_embs:
+                    embs.extend(dark_embs)
+                    
+        return embs
 
     def reset_daily_marks(self):
         with self._lock:

@@ -23,7 +23,7 @@ SFACE_URL = (
 )
 SFACE_FILENAME = "face_recognition_sface_2021dec.onnx"
 
-COSINE_THRESHOLD = 0.65   # DeepFace/Industry empirical threshold for SFace (prevents false positives)
+COSINE_THRESHOLD = 0.55   # Lowered from 0.65 to allow recognition of dark/noisy silhouettes
 L2_THRESHOLD = 1.128
 
 
@@ -50,23 +50,25 @@ class FaceRecognizer:
         # We no longer use KNN because it ruins accuracy with augmented data.
         pass
 
-    def extract_embedding(
+    def extract_embeddings(
         self,
         image: np.ndarray,
         face_bbox: tuple[int, int, int, int],
         landmarks: Optional[np.ndarray] = None,
-    ) -> Optional[np.ndarray]:
+    ) -> list[np.ndarray]:
         """
-        Extract a 128-dim L2-normalised embedding for a face.
+        Extract the 128-dim L2-normalised embedding for a face.
+        Returns a list containing the single aligned embedding.
         """
         h, w = image.shape[:2]
         x, y, fw, fh = face_bbox
 
         if fw < 20 or fh < 20:
-            return None
+            return []
 
+        embs = []
         try:
-            # Build face object in OpenCV SFace format
+            # --- Aligned Embedding ---
             if landmarks is not None and len(landmarks) == 5:
                 lm = landmarks.flatten()
             else:
@@ -79,14 +81,23 @@ class FaceRecognizer:
                 ], dtype=float)
 
             face_info = np.array([[x, y, fw, fh] + list(lm)], dtype=np.float32)
-
             aligned = self._recognizer.alignCrop(image, face_info[0])
-            embedding = self._recognizer.feature(aligned)
-            return embedding.flatten()
+            
+            if len(aligned.shape) == 3:
+                gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+                if np.mean(gray) < 75:  
+                    lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                    l = clahe.apply(l)
+                    aligned = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+                    
+            embs.append(self._recognizer.feature(aligned).flatten())
+            return embs
 
         except Exception as e:
             print(f"[FaceRecognizer] embed error: {e}")
-            return None
+            return []
 
     def match(
         self,

@@ -39,13 +39,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      PremiumHomePage(key: homeKey),
-      const RegisterFaceScreen(),
-      const MarkAttendanceScreen(),
-      const ManageUsersScreen(),
-    ];
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -64,7 +57,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
         ],
       ),
-      body: pages[selectedIndex],
+      body: IndexedStack(
+        index: selectedIndex,
+        children: [
+          PremiumHomePage(key: homeKey),
+          const RegisterFaceScreen(),
+          const MarkAttendanceScreen(),
+          const ManageUsersScreen(),
+        ],
+      ),
       bottomNavigationBar: Container(
         margin: const EdgeInsets.all(14),
         decoration: BoxDecoration(

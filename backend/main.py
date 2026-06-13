@@ -291,9 +291,6 @@ def _mjpeg_generator():
         if frame is None:
             frame = _make_placeholder()
 
-        if state.camera_mode == 'backlight':
-            frame = _enhance_backlight(frame)
-
         ret, buf = cv2.imencode('.jpg', frame,
                                 [cv2.IMWRITE_JPEG_QUALITY, 75])
         if ret:
@@ -395,13 +392,10 @@ async def camera_frame():
 
 
 def _extract_augmented_embeddings(engine, frame, light_only=False):
-    # Stub to avoid breaking existing references temporarily,
-    # but we just return the original embedding.
-    embs = []
-    emb = engine.extract_embedding_from_image(frame)
-    if emb is not None:
-        embs.append(emb.tolist())
-    return embs
+    # Extracts the original embedding + 2 heavily darkened silhouette embeddings
+    # to train the model to recognize shadows!
+    embs = engine.extract_embedding_from_image(frame, augment=True)
+    return [e.tolist() for e in embs]
 
 @app.post("/register-image")
 async def register_image(
@@ -496,8 +490,9 @@ async def register_live(
     # 2. Processing Phase: Extract embeddings from the 50 distinct real frames
     collected = []
     for frame in raw_frames:
-        emb = engine.extract_embedding_from_image(frame)
-        if emb is not None:
+        # Run heavy CPU extraction in a background thread so the live video doesn't lag
+        embs = await asyncio.to_thread(engine.extract_embedding_from_image, frame, True)
+        for emb in embs:
             collected.append(emb.tolist())
         # Yield to let the live stream update
         await asyncio.sleep(0.01)

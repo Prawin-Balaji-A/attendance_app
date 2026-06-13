@@ -163,15 +163,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             color: Colors.green,
           ),
           const SizedBox(height: 14),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildModeButton('Normal', 'normal'),
-              const SizedBox(width: 10),
-              _buildModeButton('Backlight', 'backlight'),
-            ],
-          ),
-          const SizedBox(height: 14),
+
           Text(
             statusMessage,
             textAlign: TextAlign.center,
@@ -212,30 +204,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     );
   }
 
-  Widget _buildModeButton(String label, String mode) {
-    final isSelected = currentCameraMode == mode;
-    return InkWell(
-      onTap: () async {
-        setState(() => currentCameraMode = mode);
-        await ApiService.setCameraMode(mode);
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : AppColors.background,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? AppColors.white : AppColors.textSecondary,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
+
 
   Widget detectedFaceCard(dynamic face) {
     final bool known = face['known'] == true;
